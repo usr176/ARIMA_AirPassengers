@@ -1,0 +1,279 @@
+
+---
+title: "ARIMA Practice with AirPassengers"
+author: "Umer"
+date: "2026-11-08"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+<style>
+  body{
+  font-family: Georgia, serif;
+  line-height: 1.8;
+  margin: auto
+}
+  
+  .equation-box{
+  background: #f8f9fa;
+  padding:20px;
+  border-radius:8px;
+  margin:2rem 0;
+  text-align:left;
+}
+</style>
+
+# Introduction
+
+This notebook shows the workflow for time series predictions in R, we use the built in R `AirPassenger` data and work on it to build a suitable prediction model.  
+Since we are working with a time series data, we choose an ARIMA model as our prediction model.
+
+## Why Do We Use an ARIMA Model?
+
+Before building a forecasting model, it is important to understand **why an ARIMA model is appropriate** for time series data and why a traditional linear regression model is generally not.
+
+A simple linear regression model assumes that observations are **independent** of one another.Meaning that today's observation should not depend on yesterday's observation. This assumption is violated in most time series datasets, where consecutive observations are naturally correlated through time(auto correlated).
+
+For example, the number of airline passengers this month is strongly influenced by the number of passengers in previous months. The data also exhibits long-term trends and seasonal cycles that cannot be adequately represented by a single straight-line relationship.
+
+An **ARIMA (Autoregressive Integrated Moving Average)** model is specifically designed for time series because it models the dependence between observations over time. Rather than treating each observation independently, ARIMA uses previous values and previous forecast errors to predict future observations.
+
+The three components of an ARIMA model are:
+
+- **AR (Autoregressive):** Models the relationship between the current observation and previous observations.
+- **I (Integrated):** Removes trends by differencing the series until it becomes stationary.
+- **MA (Moving Average):** Models the relationship between the current observation and previous forecast errors.
+
+For the time series data `AirPassengers`, ARIMA model is generally more appropriate than a standard linear regression model.
+
+## General ARIMA Model Equation
+The general $ARIMA(p,d,q)$ model can be written as  
+
+<div class="equation-box">
+$$
+y_t = c + \phi_1 y_{t-1} + \phi_2 y_{t-2}+...+\phi_p y_{t-p}
++\epsilon_t
++\theta_1\epsilon_{t-1}+\theta_2\epsilon_{t-2}+...+\theta_q\epsilon_{t-q}
+$$
+</div>
+
+where:
+
+- $y_t$ represents the current value of the stationary time series.
+- $\phi_1,...,\phi_p$ are autoregressive parameters that capture dependence on previous observations.
+- $\theta_1,...,\theta_q$ are moving average parameters that capture dependence on previous forecast errors.
+- $\epsilon_t$ is the random error term.  
+
+The differencing order $d$ determines how many times the original series is transformed to remove trends and achieve stationarity.
+
+## SARIMA Models
+Although the general ARIMA model accounts for trend through differencing, it does not explicitly model seasonal behaviour. The `AirPassengers` dataset shows a clear yearly seasonal pattern, with passenger numbers increasing during similar months each year.
+
+To account for this, we extend the ARIMA model to a **Seasonal ARIMA (SARIMA)** model by introducing seasonal autoregressive, differencing, and moving-average components. A SARIMA model is denoted as
+
+$$
+ARIMA(p,d,q)\times(P,D,Q)_s,
+$$
+
+where $P$, $D$, and $Q$ represent the seasonal AR, differencing, and MA orders, respectively, and $s$ denotes the seasonal period (12 for monthly data).
+
+# Box–Jenkins Approach to ARIMA Modeling
+
+ARIMA modeling follows the Box–Jenkins methodology, which provides a framework for building time series models. The methodology consists of three main stages:
+
+1. **Identification**: Examine the time series characteristics, determine whether transformations are required, and identify appropriate ARIMA orders.
+2. **Estimation**: Estimate the model parameters using the identified ARIMA structure.
+3. **Diagnostic Checking**: Evaluate whether the fitted model adequately captures the data by analyzing residuals.
+
+In practice, manually identifying the optimal values of $(p,d,q)$ and seasonal parameters $(P,D,Q)$ requires repeated analysis of ACF, PACF, and  model comparison. For complex time series data sets, this process can become quite time consuming and more prone to human error.
+
+Therefore, functions such as `auto.arima()` implement an automated version of the Box–Jenkins approach by searching through possible ARIMA/SARIMA specifications and selecting a model based on information criteria such as AIC.  
+  
+In this notebook, we will use the `auto.arima()` method.
+
+## Load libraries
+
+```{r}
+library(tseries)
+library(forecast)
+```
+
+# Data exploration & transformation
+
+ARIMA models are denoted as $ARIMA(p,d,q)$. The first step is to determine the differencing order $d$ required to make the series stationary before identifying AR and MA orders.
+
+We use the `lag.max=36` parameter to clearly observe the trend in the seasonal cycles.
+
+```{r}
+data = AirPassengers
+class(data)
+
+acf(data, lag.max=36, main="Correlogram (ACF) for AirPassengers")
+plot(data, main="Plot for AirPassengers")
+```
+
+The original series shows an upward trend and increasing seasonal variation repeatedly. A logarithmic transformation stabilizes the variance.
+
+```{r}
+data_log = log(data)
+plot(data_log, main="Log AirPassengers")
+```
+
+A first difference removes the trend.
+
+```{r}
+data_log_diff1 = diff(data_log)
+plot(data_log_diff1, main="First Difference of Log Data")
+```
+
+We then examine the seasonality using the ACF.
+
+```{r}
+frequency(data_log_diff1)
+acf(data_log_diff1, main="ACF of First Difference")
+```
+
+Because the seasonal period(frequency) is 12, apply seasonal difference at a lag of 12.
+
+```{r}
+data_sdiff_log = diff(data_log_diff1, lag=12)
+plot(data_sdiff_log)
+```
+
+By observing this transformed plot, we might be able to conclude that the series has become stationary, however just using plots is not convincing enough.  
+We move towards statistical tests to get evidence of data being stationary
+
+## Stationary Tests
+
+### Augmented Dickey-Fuller Test
+The ADF test has the following hypothesis:
+$$H_0: Unit root (non-stationary)$$
+$$H_1: Stationary $$
+
+Our Decision Rule for ADF is as follows:  
+ADF $p-value < 0.05$, Reject $H_0$, evidence of stationary.  
+ADF $p-value > 0.05$, Fail to reject $H_0$, unit root present(non-stationary)  
+
+```{r}
+adf.test(data_sdiff_log)
+```
+Since the test has $p-value < 0.01$, which is also less than critical(0.05)
+We reject $H_0$, there is evidence of stationary series.
+
+### KPSS Test(Kwiatkowski-Phillips-Schmidt-Shin)
+The KPSS test analyzes if a time series is stationary around a mean. It is the opposite of ADF in hypothesis.
+$$H_0: Stationary$$
+
+$$H_1: Non-stationary$$
+Our decision rule for the KPSS test is as follows:  
+KPSS $p-value < 0.05$, Reject $H_0$, Data is **NON-STATIONARY** (Needs differencing)  
+KPSS $p-value \geq 0.05$, Fail to reject $H_0$, Data is **STATIONARY** (Ready for model)  
+
+```{r}
+kpss_result = kpss.test(data_sdiff_log)
+kpss_result
+```
+Our KPSS result's $p-value >= 0.05$ (0.1), so we fail to reject $H_0$.
+There is insufficient evidence of data being non-stationary.  
+  
+Together, ADF and KPSS indicate the transformed series is suitable for modelling.
+
+# SARIMA Model Identification
+
+The model now has one regular and one seasonal difference, giving a SARIMA structure:
+
+$$
+ARIMA(p,d,q)\times(P,D,Q)_{12}
+$$
+
+```{r}
+acf(data_sdiff_log, main="ACF")
+pacf(data_sdiff_log, main="PACF")
+```
+
+## Selected SARIMA Model
+We use R's Automatic model selection using `auto.arima()` function in `forecast` library.  
+R will automatically find the best $ARIMA$ parameters, rather than us finding manually through multiple runs, trails and errors with the ACF and PACF plots.
+
+```{r}
+best_arima_model = auto.arima(log(data), stepwise=FALSE, approximation=FALSE)
+summary(best_arima_model)
+```
+After transforming the data using a logarithmic transformation and applying regular and seasonal differencing, the identified model is:
+
+$$
+SARIMA(0,1,1)(0,1,1)_{12}
+$$
+
+This means:
+
+- $d=1$: One regular difference was required to remove the increasing trend.
+- $D=1$: One seasonal difference was required to remove the yearly seasonal cycle.
+- $q=1$: The model uses the previous period's error to improve predictions.
+- $Q=1$: The seasonal component uses the previous year's seasonal error.
+- $s=12$: The seasonal cycle occurs every 12 months.
+
+From the results of `auto.arima()` and the coefficients, The fitted model becomes  
+<div class="equation-box">
+$$
+Z_t = \epsilon_t - 0.4018\epsilon_{t-1} - 0.5569\epsilon_{t-12}
+$$
+</div>
+where:
+
+- $Z_t$ is the stationary log-transformed passenger series after regular and seasonal differencing.
+- The coefficient $-0.4018$ captures short-term dependence from the previous month.
+- The coefficient $-0.5569$ captures yearly seasonal dependence from the previous 12 months.  
+  
+## Residual Diagnostics
+
+```{r}
+arima_model_residuals = residuals(best_arima_model)
+checkresiduals(best_arima_model)
+```
+
+The Ljung Box test $p-value > 0.05$ (0.233), hence we  fail to reject the null hypothesis $H_0$.
+The residuals are independently distributed white noise. Which indicates that the model has no more patterns.
+
+# Forecasting
+We can now use the model for future predictions.  
+We will generate a 24-month (2 years) future forecast
+The `Lambda = 0` tells R to automatically handle the `exp()` un-logging of the data and bias correction.
+```{r}
+future_prediction = forecast(best_arima_model, h=24, lambda=0)
+print(future_prediction)
+```
+
+Finally, We plot the final predicted values on top of the normal Air-passenger data plot.  
+```{r}
+plot(AirPassengers,
+     xlim=c(1949,1963),
+     ylim=c(100,700),
+     main="2-Year SARIMA Forecast",
+     xlab="Year",
+     ylab="Raw Passenger Count",
+     lwd=2)
+
+lines(future_prediction$mean,col="blue",lwd=2)
+lines(future_prediction$upper[,2],col="darkgray",lty=2)
+lines(future_prediction$lower[,2],col="darkgray",lty=2)
+
+legend("topleft",
+       legend=c("Historical Data","Forecast","95% Confidence Band"),
+       col=c("black","blue","darkgray"),
+       lty=c(1,1,2),
+       lwd=c(2,2,1))
+```
+
+# Conclusion
+
+We used the Box–Jenkins methodology to develop an ARIMA-based forecasting model. The data was examined, transformed using logarithms, and differenced to remove trend and seasonal patterns. We used ADF and KPSS tests to test for stationary time series before fitting the model.
+
+The final identified model was $SARIMA(0,1,1)\times(0,1,1)_{12}$.  
+The model successfully captured the trend and seasonal behaviour present in the `AirPassengers` dataset. Residual diagnostics showed that the remaining errors were random, indicating that the model was suitable for forecasting.
+
+The predictions generated by the model provide reliable estimates for future passenger values, though uncertainty can appear as events in real world can change patterns. We also deduced some confidence intervals in the plot to help represent this uncertainty.
+
+## Model Usage
+This SARIMA model can be integrated into forecasting applications. It can be used in dashboards, data pipelines, or APIs to automatically generate future predictions as new data becomes available.
