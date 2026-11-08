@@ -25,7 +25,7 @@ SARIMA(0,1,1)(0,1,1)[12]
 
 The fitted SARIMA model was used to generate a 24-month forecast with 95% confidence intervals.
 
-![SARIMA Forecast](images/sarima_forecast.png)
+![SARIMA Forecast](images/SARIMA_forecast.png)
 
 ## Tools
 
