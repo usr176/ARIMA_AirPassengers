@@ -21,6 +21,12 @@ The analysis follows the Box-Jenkins methodology:
 
 SARIMA(0,1,1)(0,1,1)[12]
 
+## Forecast Results
+
+The fitted SARIMA model was used to generate a 24-month forecast with 95% confidence intervals.
+
+![SARIMA Forecast](images/sarima_forecast.png)
+
 ## Tools
 
 - R
